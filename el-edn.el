@@ -94,7 +94,7 @@
     (puthash 'type type token)
     (puthash 'line line token)
     (puthash 'value value token)
-    node))
+    token))
 
 (defun edn-node (type line value)
   (let ((node (make-hash-table :test 'equal)))
@@ -106,9 +106,38 @@
 (defun handle-atom (token)
   (let ((val (gethash 'value token)))
     (edn-node
-      (cond ((valid-nil value)))
+      (cond ((valid-nil val) 'EdnNil)
+	    ((eq (gethash 'type token) 'String) 'EdnString)
+	    ((valid-char val) 'EdnChar)
+	    ((valid-bool val) 'EdnBool)
+	    ((valid-int val) 'EdnInt)
+	    ((valid-float val) 'EdnFloat)
+	    ((valid-keyword val) 'EdnFloat)
+	    ((valid-symbol val) 'EdnSymbol)
+	    (t nil))
       (gethash 'line token)
       val)))
+
+(defun handle-collection (token values)
+  (let ((val (gethash 'value token)))
+    (edn-node
+      (cond ((string-equal val "(") 'EdnList)
+	    ((string-equal val "[") 'EdnVector)
+	    ((string-equal val "{") 'EdnMap))
+      (gethash 'line token)
+      values)))
+
+(defun handle-tagged (token value)
+  (let ((tag-name (substring (gethash 'value token) 1)))
+    (edn-node
+      (cond ((string-equal tag-name "_") 'EdnDiscard)
+ 	    ((string-equal tag-name "") 'EdnSet)
+	    (t 'EdnTagged))
+      (gethash 'line token)
+      (let ((content (make-hash-table :test 'equal)))
+	(puthash 'tag (edn-node 'Symbol (gethash 'line token) tagName) content)
+	(puthash 'value value content)
+	content))))
 
 (defun lex (edn-string)
   (let ((escaping nil)
@@ -125,13 +154,13 @@
 	  (lambda (type line value)
 	    (progn
 	      (setq tokens 
-  	        (append tokens (list (list type line value))))
+  	        (append tokens (list (edn-token type line value))))
 	      (setq token "")
 	      (setq string-content "")))))
-			   
     (mapcar 
       (lambda (c) 
 	(progn
+	  (print (list c))
 	  ;;keep track of line
 	  (if (or (string-equal c "\n")
 		  (string-equal c "\r"))	     
@@ -157,10 +186,7 @@
 		  (if escaping
 		      (progn
 			(setq escaping nil)
-			(if (or (string-equal c "t")
-				(string-equal c "n")
-				(string-equal c "f")
-				(string-equal c "r"))
+			(if (in-chars c "tnfr")
 			    (setq string-content (append string-content escape-char)))
 			(setq string-content (append string-content c))))))
 	     ;;paren or whitespace
@@ -185,3 +211,38 @@
 	(funcall create-token 'Atom line token))
     tokens))
 
+(defun edn-read (edn-string1)
+  (let ((tokens (lex edn-string1))
+	(shift-token 
+	 (lambda () 
+	   (let ((token (car tokens)))
+	     (setq tokens (cdr tokens))
+	     token)))
+	(read-ahead 
+	 (lambda (token)
+	   (let ((type (gethash 'type token))
+		 (val (gethash 'value token)))
+	     (print (list "VAL" val "TYPE" type))
+	     (cond 
+	      ((eq type 'Paren)
+	       (let ((L '())
+		     (close-paren (cond ((string-equal val "(") ")")
+			      	        ((string-equal val "[") "]")
+					((string-equal val "{") "}")))
+		     (next-token nil))
+		 (while tokens
+		   (setq next-token (funcall shift-token))
+		   (if (string-equal (gethash 'value next-token) close-paren)
+		       (handle-collection token L)
+		       (setq L (append L (list (funcall read-ahead next-token))))))
+		 (error "Unexpected end of list")))
+	      ((in-chars val ")]}")
+	       (progn 
+		 (print (list token tokens))
+		 (error "Unexpected closing paren")))
+	      ((string-equal (substring val 0 1) "#")
+	       (handle-tagged token (funcall read-ahead (funcall shift-token))))
+	      (t (handle-atom token)))))))
+    (funcall read-ahead (funcall shift-token))))
+
+(edn-read "[x y z]")
