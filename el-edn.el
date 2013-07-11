@@ -1,6 +1,6 @@
 (defun in-chars (tc char-string)
   (let ((found nil))
-    (mapcar (lambda (c) 
+    (mapcar (lambda (c)
 	      (if (and (> (length c) 0) (string-equal c tc))
 		  (setq found t)))
 	    (split-string char-string ""))
@@ -16,31 +16,31 @@
 
 (defun count-chars (str char)
   (let ((count 0))
-    (mapcar (lambda (c) 
+    (mapcar (lambda (c)
 	      (if (string-equal c char)
 		  (setq count (+ count 1))))
 	    (split-string str ""))
     count))
-  
-(defun valid-symbol (str) 
+
+(defun valid-symbol (str)
   (let ((ucstr (upcase str))
         (fchar (substring str 0 1)))
-    (and 
+    (and
      ;;can only have valid chars
      (only-containing-chars ucstr "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.*+!-_?$%&=:#/")
      ;;cannot start with a number
      (not (in-chars fchar "0123456789"))
      ;;if first char is - + or . next must not be numeric
-     (not (and (in-chars fchar "-+.") 
-	       (> (length ucstr) 1) 
+     (not (and (in-chars fchar "-+.")
+	       (> (length ucstr) 1)
 	       (in-chars (substring ucstr 1 2) "0123456789")))
      ;;only allow one slash per symbol
      (<= (count-chars str "/") 1))))
 
-(defun valid-keyword (str) 
-  (and (string-equal (substring str 0 1) ":") 
+(defun valid-keyword (str)
+  (and (string-equal (substring str 0 1) ":")
        (valid-symbol (substring str 1))))
- 
+
 (defun valid-nil (str)
   (string-equal str "nil"))
 
@@ -48,7 +48,7 @@
   (or (string-equal str "true")
       (string-equal str "false")))
 
-(defun valid-int (str &optional disallow-sign) 
+(defun valid-int (str &optional disallow-sign)
   (progn
     (if (and (in-chars (substring str 0 1) "-+")
 	     (> (length str) 1)
@@ -56,7 +56,7 @@
 	(setq str (substring str 1)))
     (if (in-chars (substring str -1) "NM")
 	(setq str (substring str 0 -1)))
-    (in-chars str "0123456789")))
+    (only-containing-chars str "0123456789")))
 
 (defun valid-float (str)
   (let ((front "")
@@ -65,7 +65,7 @@
 	(period-pos (string-match "\\." str))
 	(result t))
     (if period-pos
-	(progn 
+	(progn
 	  (setq front (substring str 0 period-pos))
 	  (setq back (substring str (+ 1 period-pos))))
         (setq back str))
@@ -84,7 +84,7 @@
 		(if (not (valid-int back t))
 		    (setq result nil))))))
     result))
-	      
+
 (defun valid-char (str)
   (and (string-equal (substring str 0 1) "\\")
        (= (length str) 2)))
@@ -112,9 +112,9 @@
 	    ((valid-bool val) 'EdnBool)
 	    ((valid-int val) 'EdnInt)
 	    ((valid-float val) 'EdnFloat)
-	    ((valid-keyword val) 'EdnFloat)
+	    ((valid-keyword val) 'EdnKeyword)
 	    ((valid-symbol val) 'EdnSymbol)
-	    (t nil))
+	    (t (error (concat "unknown type for " val))))
       (gethash 'line token)
       val)))
 
@@ -135,7 +135,7 @@
 	    (t 'EdnTagged))
       (gethash 'line token)
       (let ((content (make-hash-table :test 'equal)))
-	(puthash 'tag (edn-node 'Symbol (gethash 'line token) tagName) content)
+	(puthash 'tag (edn-node 'Symbol (gethash 'line token) tag-name) content)
 	(puthash 'value value content)
 	content))))
 
@@ -150,27 +150,26 @@
 	(string-char "\"")
 	(line 1)
         (tokens '())
-	(create-token 
+	(create-token
 	  (lambda (type line value)
 	    (progn
-	      (setq tokens 
+	      (setq tokens
   	        (append tokens (list (edn-token type line value))))
 	      (setq token "")
 	      (setq string-content "")))))
-    (mapcar 
-      (lambda (c) 
+    (mapcar
+      (lambda (c)
 	(progn
-	  (print (list c))
 	  ;;keep track of line
 	  (if (or (string-equal c "\n")
-		  (string-equal c "\r"))	     
+		  (string-equal c "\r"))
 	      (setq line (+ line 1)))
-	  (cond 
+	  (cond
             ((string-equal c "") nil)
 	    ;;comments
 	    (in-comment
 	     (if (string-equal c "\n")
-		 (progn 
+		 (progn
 		   (setq in-comment nil)
 		   (if (> (length token) 0)
 		       (funcall create-token 'Atom line token)))))
@@ -202,7 +201,7 @@
 		      (if (string-equal c escape-char)
 			  (setq escaping t)))
 		  (if (or (string-equal token "#_")
-			  (and (= (length token) 2) 
+			  (and (= (length token) 2)
 			       (string-equal (substring token 0 1) escape-char)))
 		      (funcall create-token 'Atom line token))
 	          (setq token (concat token c)))))))
@@ -213,31 +212,31 @@
 
 (defun edn-read (edn-string1)
   (let ((tokens (lex edn-string1))
-	(shift-token 
-	 (lambda () 
+	(shift-token
+	 (lambda ()
 	   (let ((token (car tokens)))
 	     (setq tokens (cdr tokens))
 	     token)))
-	(read-ahead 
+	(read-ahead
 	 (lambda (token)
 	   (let ((type (gethash 'type token))
 		 (val (gethash 'value token)))
-	     (print (list "VAL" val "TYPE" type))
-	     (cond 
+	     (cond
 	      ((eq type 'Paren)
 	       (let ((L '())
 		     (close-paren (cond ((string-equal val "(") ")")
 			      	        ((string-equal val "[") "]")
 					((string-equal val "{") "}")))
 		     (next-token nil))
-		 (while tokens
-		   (setq next-token (funcall shift-token))
-		   (if (string-equal (gethash 'value next-token) close-paren)
-		       (handle-collection token L)
-		       (setq L (append L (list (funcall read-ahead next-token))))))
-		 (error "Unexpected end of list")))
+		 (catch 'break
+		   (while tokens
+		     (setq next-token (funcall shift-token))
+		     (if (string-equal (gethash 'value next-token) close-paren)
+			 (throw 'break (handle-collection token L))
+		         (setq L (append L (list (funcall read-ahead next-token))))))
+		    (error "Unexpected end of list"))))
 	      ((in-chars val ")]}")
-	       (progn 
+	       (progn
 		 (print (list token tokens))
 		 (error "Unexpected closing paren")))
 	      ((string-equal (substring val 0 1) "#")
@@ -245,4 +244,19 @@
 	      (t (handle-atom token)))))))
     (funcall read-ahead (funcall shift-token))))
 
-(edn-read "[x y z]")
+(defun edn-pprint (node)
+  (let ((type (gethash 'type node))
+        (value (gethash 'value node)))
+    (cond ((member type '(EdnList EdnSet EdnVector EdnMap))
+           (let ((vals (join-string (mapcar 'edn-pprint value))))
+             (cond ((eq type 'EdnList) (concat "(" vals ")"))
+                   ((eq type 'EdnVector) (concat "[" vals "]"))
+                   ((eq type 'EdnMap) (concat "{" vals "}")))))
+          ((eq type 'EdnTagged)
+           (concat "#"
+                   (edn-pprint (gethash 'tag value))
+                   (edn-pprint (gethash 'value value))))
+          (t value))))
+
+
+(edn-pprint (edn-read "#people (33 33.33E-1)"))
