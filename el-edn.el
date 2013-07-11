@@ -176,18 +176,21 @@
 	     ;;strings
 	     ((and (string-equal c string-char) (not escaping))
 	      (if in-string
-		  (funcall create-token 'String line string-content)
+		  (progn
+                    (setq in-string nil)
+                    (funcall create-token 'String line string-content))
 		  (setq in-string t)))
 	     ;;build-string
 	     (in-string
 	      (if (and (string-equal c escape-char) (not escaping))
 		  (setq escaping t)
-		  (if escaping
+                  (progn
+                    (if escaping
 		      (progn
 			(setq escaping nil)
 			(if (in-chars c "tnfr")
-			    (setq string-content (append string-content escape-char)))
-			(setq string-content (append string-content c))))))
+			    (setq string-content (concat string-content escape-char)))))
+		    (setq string-content (concat string-content c)))))
 	     ;;paren or whitespace
 	     ((in-chars c "()[]{}\t\n\r ,")
 	      (progn
@@ -239,7 +242,8 @@
 	       (progn
 		 (print (list token tokens))
 		 (error "Unexpected closing paren")))
-	      ((string-equal (substring val 0 1) "#")
+	      ((and (> (length val) 0)
+                    (string-equal (substring val 0 1) "#"))
 	       (handle-tagged token (funcall read-ahead (funcall shift-token))))
 	      (t (handle-atom token)))))))
     (funcall read-ahead (funcall shift-token))))
@@ -252,11 +256,10 @@
              (cond ((eq type 'EdnList) (concat "(" vals ")"))
                    ((eq type 'EdnVector) (concat "[" vals "]"))
                    ((eq type 'EdnMap) (concat "{" vals "}")))))
+          ((eq type 'EdnString)
+           (concat "\"" value "\""))
           ((eq type 'EdnTagged)
            (concat "#"
-                   (edn-pprint (gethash 'tag value))
+                   (edn-pprint (gethash 'tag value)) " "
                    (edn-pprint (gethash 'value value))))
           (t value))))
-
-
-(edn-pprint (edn-read "#people (33 33.33E-1)"))
