@@ -1,25 +1,35 @@
+;;; el-edn.el --- EDN data format goodness
+
+;; Copyright (C) 2013 Shaun Gilchrist
+
+;; Author: Shaun Gilchrist <shaunxcode@gmail.com>
+;; Maintainer: Shaun Gilchrist <shaunxcode@gmail.com>
+;; Created: 11 Jul 2013
+;; Keywords: EDN, Datomic, Clojure
+;; Version: 0.0.1
+
 (defun in-chars (tc char-string)
   (let ((found nil))
-    (mapcar (lambda (c)
-	      (if (and (> (length c) 0) (string-equal c tc))
-		  (setq found t)))
-	    (split-string char-string ""))
+    (mapc (lambda (c)
+	    (if (and (> (length c) 0) (string-equal c tc))
+	        (setq found t)))
+	  (split-string char-string ""))
     found))
 
 (defun only-containing-chars (str char-string)
   (let ((found nil))
-    (mapcar (lambda (c)
-	      (if (and (> (length c) 0) (not (in-chars c char-string)))
-		  (setq found t)))
-	    (split-string str ""))
+    (mapc (lambda (c)
+	    (if (and (> (length c) 0) (not (in-chars c char-string)))
+	        (setq found t)))
+	  (split-string str ""))
     (not found)))
 
 (defun count-chars (str char)
   (let ((count 0))
-    (mapcar (lambda (c)
-	      (if (string-equal c char)
-		  (setq count (+ count 1))))
-	    (split-string str ""))
+    (mapc (lambda (c)
+	    (if (string-equal c char)
+	        (setq count (+ count 1))))
+	  (split-string str ""))
     count))
 
 (defun valid-symbol (str)
@@ -146,20 +156,20 @@
         (in-comment nil)
         (token "")
         (paren "")
-	(escape-char "\\")
-	(string-char "\"")
-	(line 1)
-        (tokens '())
-	(create-token
-	  (lambda (type line value)
-	    (progn
-	      (setq tokens
-  	        (append tokens (list (edn-token type line value))))
-	      (setq token "")
-	      (setq string-content "")))))
-    (mapcar
-      (lambda (c)
-	(progn
+        (escape-char "\\")
+        (string-char "\"")
+        (line 1)
+        (tokens '()))
+    (cl-labels
+      ((create-token (type line value)
+         (progn
+	   (setq tokens
+  	     (append tokens (list (edn-token type line value))))
+	   (setq token "")
+	   (setq string-content ""))))
+      (mapc
+       (lambda (c)
+         (progn
 	  ;;keep track of line
 	  (if (or (string-equal c "\n")
 		  (string-equal c "\r"))
@@ -172,13 +182,13 @@
 		 (progn
 		   (setq in-comment nil)
 		   (if (> (length token) 0)
-		       (funcall create-token 'Atom line token)))))
+		       (create-token 'Atom line token)))))
 	     ;;strings
 	     ((and (string-equal c string-char) (not escaping))
 	      (if in-string
 		  (progn
                     (setq in-string nil)
-                    (funcall create-token 'String line string-content))
+                    (create-token 'String line string-content))
 		  (setq in-string t)))
 	     ;;build-string
 	     (in-string
@@ -195,9 +205,9 @@
 	     ((in-chars c "()[]{}\t\n\r ,")
 	      (progn
 	        (if (> (length token) 0)
-	  	    (funcall create-token 'Atom line token))
+	  	    (create-token 'Atom line token))
 		(if (in-chars c "()[]{}")
-		    (funcall create-token 'Paren line c))))
+		    (create-token 'Paren line c))))
 	     (t (progn
 		  (if escaping
 		      (setq escaping nil)
@@ -206,52 +216,51 @@
 		  (if (or (string-equal token "#_")
 			  (and (= (length token) 2)
 			       (string-equal (substring token 0 1) escape-char)))
-		      (funcall create-token 'Atom line token))
+		      (create-token 'Atom line token))
 	          (setq token (concat token c)))))))
        (split-string edn-string ""))
     (if (> (length token) 0)
-	(funcall create-token 'Atom line token))
-    tokens))
+	(create-token 'Atom line token))
+    tokens)))
 
 (defun edn-read (edn-string1)
-  (let ((tokens (lex edn-string1))
-	(shift-token
-	 (lambda ()
-	   (let ((token (car tokens)))
-	     (setq tokens (cdr tokens))
-	     token)))
-	(read-ahead
-	 (lambda (token)
-	   (let ((type (gethash 'type token))
+  (let ((tokens (lex edn-string1)))
+       (cl-labels
+	 ((read-ahead (token)
+           (let ((type (gethash 'type token))
 		 (val (gethash 'value token)))
 	     (cond
-	      ((eq type 'Paren)
-	       (let ((L '())
-		     (close-paren (cond ((string-equal val "(") ")")
-			      	        ((string-equal val "[") "]")
-					((string-equal val "{") "}")))
-		     (next-token nil))
-		 (catch 'break
-		   (while tokens
-		     (setq next-token (funcall shift-token))
-		     (if (string-equal (gethash 'value next-token) close-paren)
-			 (throw 'break (handle-collection token L))
-		         (setq L (append L (list (funcall read-ahead next-token))))))
+	       ((eq type 'Paren)
+	        (let ((L '())
+		      (close-paren (cond ((string-equal val "(") ")")
+                                         ((string-equal val "[") "]")
+                                         ((string-equal val "{") "}")))
+                      (next-token nil))
+                  (catch 'break
+                    (while tokens
+                      (setq next-token (pop tokens))
+                      (if (string-equal (gethash 'value next-token) close-paren)
+                          (throw 'break (handle-collection token L))
+                          (setq L (append L (list (read-ahead next-token))))))
 		    (error "Unexpected end of list"))))
-	      ((in-chars val ")]}")
-	       (progn
-		 (print (list token tokens))
-		 (error "Unexpected closing paren")))
-	      ((and (> (length val) 0)
-                    (string-equal (substring val 0 1) "#"))
-	       (handle-tagged token (funcall read-ahead (funcall shift-token))))
-	      (t (handle-atom token)))))))
-    (funcall read-ahead (funcall shift-token))))
+               ((in-chars val ")]}")
+                (progn
+                  (print (list token tokens))
+                  (error "Unexpected closing paren")))
+               ((and (> (length val) 0)
+                     (string-equal (substring val 0 1) "#"))
+                (handle-tagged token (read-ahead (pop tokens))))
+               (t (handle-atom token))))))
+         (read-ahead (pop tokens)))))
+
+(defun node-is-collection (node)
+  (member (gethash 'type node)
+          '(EdnList EdnSet EdnVector EdnMap)))
 
 (defun edn-pprint (node)
   (let ((type (gethash 'type node))
         (value (gethash 'value node)))
-    (cond ((member type '(EdnList EdnSet EdnVector EdnMap))
+    (cond ((node-is-collection node)
            (let ((vals (join-string (mapcar 'edn-pprint value))))
              (cond ((eq type 'EdnList) (concat "(" vals ")"))
                    ((eq type 'EdnVector) (concat "[" vals "]"))
@@ -263,3 +272,52 @@
                    (edn-pprint (gethash 'tag value)) " "
                    (edn-pprint (gethash 'value value))))
           (t value))))
+
+;;memoized keywords
+(setq edn-kws (make-hash-table :test 'equal))
+(defun edn-kw (kw)
+  (progn
+    (when (not (gethash kw edn-kws))
+      (puthash kw (make-symbol kw) edn-kws))
+    (gethash kw edn-kws)))
+
+;;memoized symbols
+(setq edn-syms (make-hash-table :test 'equal))
+(defun edn-sym (sym)
+  (progn
+    (when (not (gethash sym edn-syms))
+      (puthash sym (make-symbol sym) edn-syms))
+    (gethash sym edn-syms)))
+
+;;handlers for reification
+(setq edn-reify-handlers (make-hash-table :test 'equal))
+(defun set-reify-handler (type handler)
+  (puthash type handler edn-reify-handlers))
+
+(set-reify-handler 'EdnInt (lambda (val) (string-to-number val)))
+(set-reify-handler 'EdnFloat (lambda (val) (string-to-number val)))
+(set-reify-handler 'EdnChar (lambda (val) (substring val 1)))
+(set-reify-handler 'EdnString (lambda (val) val))
+(set-reify-handler 'EdnSymbol (lambda (val) (edn-sym val)))
+(set-reify-handler 'EdnKeyword (lambda (val) (edn-kw val)))
+(set-reify-handler 'EdnNil (lambda () nil))
+(set-reify-handler 'EdnBool (lambda (val) (string= val "true")))
+(set-reify-handler 'EdnList (lambda (vals) vals))
+(set-reify-handler 'EdnVector (lambda (vals) (coerce vals 'vector)))
+(set-reify-handler 'EdnSet (lambda (vals) vals))
+(set-reify-handler 'EdnMap
+                   (lambda (vals)
+                     (let ((M (make-hash-table :test 'equal)))
+                       (while (> (length vals) 0)
+                         (puthash (pop vals) (pop vals) M))
+                       M)))
+
+(setq edn-tag-handlers (make-hash-table :test 'equal))
+
+(defun edn-reify (node)
+  (let* ((type (gethash 'type node))
+         (value (gethash 'value node)))
+    (when (node-is-collection node)
+      (setq value (mapcar 'edn-reify value)))
+    (print (list "REIFY" type value))
+    (funcall (gethash type edn-reify-handlers) value)))
