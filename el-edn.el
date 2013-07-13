@@ -120,10 +120,10 @@
 	    ((eq (gethash 'type token) 'String) 'EdnString)
 	    ((valid-char val) 'EdnChar)
 	    ((valid-bool val) 'EdnBool)
-	    ((valid-int val) 'EdnInt)
-	    ((valid-float val) 'EdnFloat)
 	    ((valid-keyword val) 'EdnKeyword)
 	    ((valid-symbol val) 'EdnSymbol)
+	    ((valid-int val) 'EdnInt)
+	    ((valid-float val) 'EdnFloat)
 	    (t (error (concat "unknown type for " val))))
       (gethash 'line token)
       val)))
@@ -145,7 +145,7 @@
 	    (t 'EdnTagged))
       (gethash 'line token)
       (let ((content (make-hash-table :test 'equal)))
-	(puthash 'tag (edn-node 'Symbol (gethash 'line token) tag-name) content)
+	(puthash 'tag (edn-node 'EdnSymbol (gethash 'line token) tag-name) content)
 	(puthash 'value value content)
 	content))))
 
@@ -273,21 +273,9 @@
                    (edn-pprint (gethash 'value value))))
           (t value))))
 
-;;memoized keywords
-(setq edn-kws (make-hash-table :test 'equal))
-(defun edn-kw (kw)
-  (progn
-    (when (not (gethash kw edn-kws))
-      (puthash kw (make-symbol kw) edn-kws))
-    (gethash kw edn-kws)))
-
-;;memoized symbols
-(setq edn-syms (make-hash-table :test 'equal))
-(defun edn-sym (sym)
-  (progn
-    (when (not (gethash sym edn-syms))
-      (puthash sym (make-symbol sym) edn-syms))
-    (gethash sym edn-syms)))
+(setq edn-tag-handlers (make-hash-table :test 'equal))
+(defun set-edn-tag-handler (tag handler)
+  (puthash tag handler edn-tag-handlers))
 
 ;;handlers for reification
 (setq edn-reify-handlers (make-hash-table :test 'equal))
@@ -298,12 +286,12 @@
 (set-reify-handler 'EdnFloat (lambda (val) (string-to-number val)))
 (set-reify-handler 'EdnChar (lambda (val) (substring val 1)))
 (set-reify-handler 'EdnString (lambda (val) val))
-(set-reify-handler 'EdnSymbol (lambda (val) (edn-sym val)))
-(set-reify-handler 'EdnKeyword (lambda (val) (edn-kw val)))
-(set-reify-handler 'EdnNil (lambda () nil))
+(set-reify-handler 'EdnSymbol (lambda (val) (intern val)))
+(set-reify-handler 'EdnKeyword (lambda (val) (intern val)))
+(set-reify-handler 'EdnNil (lambda (val) nil))
 (set-reify-handler 'EdnBool (lambda (val) (string= val "true")))
 (set-reify-handler 'EdnList (lambda (vals) vals))
-(set-reify-handler 'EdnVector (lambda (vals) (coerce vals 'vector)))
+(set-reify-handler 'EdnVector (lambda (vals) (vconcat vals)))
 (set-reify-handler 'EdnSet (lambda (vals) vals))
 (set-reify-handler 'EdnMap
                    (lambda (vals)
@@ -312,12 +300,24 @@
                          (puthash (pop vals) (pop vals) M))
                        M)))
 
-(setq edn-tag-handlers (make-hash-table :test 'equal))
+(set-edn-tag-handler 'inst (lambda (val) (date-to-time val)))
+(set-edn-tag-handler 'uuid (lambda (val) val))
+
+(defun reify-tagged (value)
+  (let* ((tag (edn-reify (gethash 'tag value)))
+         (val (edn-reify (gethash 'value value)))
+         (handler (or (gethash tag edn-tag-handlers) (lambda (val) value))))
+    (funcall handler val)))
+
 
 (defun edn-reify (node)
   (let* ((type (gethash 'type node))
          (value (gethash 'value node)))
     (when (node-is-collection node)
       (setq value (mapcar 'edn-reify value)))
-    (print (list "REIFY" type value))
-    (funcall (gethash type edn-reify-handlers) value)))
+    (if (eq type 'EdnTagged)
+        (reify-tagged value)
+        (funcall (gethash type edn-reify-handlers) value))))
+
+(defun edn-parse (edn)
+  (edn-reify (edn-read edn)))
